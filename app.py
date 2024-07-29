@@ -1,81 +1,60 @@
 import streamlit as st
-import os 
-
-
 import spacy
 from spacy import displacy
+import re
+from spacy.tokenizer import Tokenizer
+
 nlp = spacy.load('en_core_web_sm')
 
-HTML_WRAPPER = """<div style="overflow-x:auto; border: 1px solid #e6e9ef; border-radius: 0.25rem; padding: 1rem;>{}</div>"""
+def custom_tokenizer(nlp):
+    infix_re = re.compile(r'''[-~]''')
+    prefix_re = re.compile(r'''^[\[\("']''')
+    suffix_re = re.compile(r'''[]\)"']$''')
+    return Tokenizer(nlp.vocab, prefix_search=prefix_re.search,
+                     suffix_search=suffix_re.search,
+                     infix_finditer=infix_re.finditer,
+                     token_match=None)
 
+nlp.tokenizer = custom_tokenizer(nlp)
 
-def sanitize_names(text):
-    docx = nlp(text)
-    redacted_sentence = []
-    with docx.retokenize() as retokenizer:
-        for ent in docx.ents:
-           retokenizer.merge(ent)
-           print(ent.label_,ent, sep="\t")
-        for token in docx:
-            if token.ent_type_ == "PERSON":
-                redacted_sentence.append("[NOME]")
-            else:
-                redacted_sentence.append(token.text)
-    return " ".join(redacted_sentence)
+ruler = nlp.add_pipe("entity_ruler", after="ner")
 
-def sanitize_places(text):
-    docx = nlp(text)
-    redacted_sentence = []
-    with docx.retokenize() as retokenizer:
-        for ent in docx.ents:
-            retokenizer.merge(ent)
-        for token in docx:
-            if token.ent_type_ == 'GPE':
-                redacted_sentence.append("[LUGAR]")
-            else:
-                redacted_sentence.append(token.text)
-    return " ".join(redacted_sentence)
+HTML_WRAPPER = """<div style="overflow-x:auto; border: 1px solid #e6e9ef; border-radius: 0.25rem; padding: 1rem; margin:5px;>{}</div>"""
 
-def sanitize_org(text):
-    docx = nlp(text)
-    redacted_sentence = []
-    with docx.retokenize() as retokenizer:
-        for ent in docx.ents:
-            retokenizer.merge(ent)
-        for token in docx:
-            if token.ent_type_ == 'ORG':
-                redacted_sentence.append("[LINK]")
-            else:
-                redacted_sentence.append(token.text)
-    return " ".join(redacted_sentence)
+patterns = [
+    {"label": "CLASS NAME", "pattern": [{"LOWER": "_"}]},
+    {"label": "CLASS NAME", "pattern": [{"LOWER": {"REGEX": r"(_\d+\.?\d*.?\d*)"}}]},
+    {"label": "CLASS NAME", "pattern": [{"LOWER": "_"}, {"TEXT": {"REGEX": r"(_\d+\.?\d*.?\d*)"}}]},
+    {"label": "CLASS NAME", "pattern": [{"TEXT": {"REGEX": r"^[A-Z][a-zA-Z0-9]*$"}}]},
+    {"label": "CLASS NAME", "pattern": [{"TEXT": {"REGEX": r"^[A-Z][a-zA-Z0-9]*\.[A-Z][a-zA-Z0-9]*$"}}]},
+    {"label": "CLASS NAME", "pattern": [{"TEXT": {"REGEX": r"^[A-Za-z]+\<[A-Za-z]+\>$"}}]}
+]
 
-def sanitize_dates(text):
-    docx = nlp(text)
-    redacted_sentence = []
-    with docx.retokenize() as retokenizer:
-        for ent in docx.ents:
-            retokenizer.merge(ent)
-        for token in docx:
-            if token.ent_type_ == 'DATE':
-                redacted_sentence.append("[DATA]")
-            else:
-                redacted_sentence.append(token.text)
-    return " ".join(redacted_sentence)
+colors = {
+    'CLASS NAME': "#508D4E", 
+    "CLASS NAME": "#77E4C8",
+    "CLASS NAME": "#ffcc00",
+    "CLASS NAME": "#ff6666"
+}
+options = {"ents": ['CLASS NAME', 'CLASS NAME', 'CLASS NAME', 'CLASS NAME'], "colors": colors}
+
+ruler.add_patterns(patterns)
 
 
 @st.cache_data 
 def render_entities(rawtext):
     docx = nlp(rawtext)
-    html = displacy.render(docx, style='ent')
+    html = displacy.render(docx, style='ent', options=options)
     html = html.replace("\n\n","\n")
     result = HTML_WRAPPER.format(html)
     return result
 
 def get_entities(text):
-    doc = nlp(text)
-    entities = []
-    for ent in doc.ents:
-        entities.append((ent.text, ent.label_))
+    with nlp.disable_pipes('ner'):
+        doc = nlp(text)
+        entities = []
+        for ent in doc.ents:
+            entities.append((ent.text, ent.label_))
     return entities
 
 
@@ -88,29 +67,24 @@ def explain_entity(entity, label):
     }
     return explanations.get(label, "Entidade desconhecida.")
 
- 
 
 
 def main():
 
-    st.title("Document Redactor App")
-    st.text("Built with Streamlit and SpaCy") 
+    st.title("Ajudante de Documentação")
 
-
-    st.subheader("Redaction of Terms")
+    st.subheader("Documentação")
     rawtext = st.text_area("Enter Text", "Type Here")
   
- 
     if st.button("Submit"):
         entities = get_entities(rawtext)
         explanations = [(entity, label, explain_entity(entity, label)) for entity, label in entities]
-        st.subheader("Original Text")
+        st.subheader("Extração de dados")
         st.write(render_entities(rawtext), unsafe_allow_html=True)
         st.divider()
         st.subheader("Explanation")
         st.write(explanations)
             
     
-
 if __name__ == '__main__':
     main()
